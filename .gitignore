@@ -23,3 +23,6 @@ profiles/
 
 # --- macOS ---
 .DS_Store
+
+# --- その他 ---
+README.pdf
