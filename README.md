@@ -1,398 +1,589 @@
 # 7日間 学習計画：コンピュータアーキテクチャ × 高速化 × VLA
-## 〜 SmolVLAの推論高速化レポートを作りながら学ぶ 〜
+## 〜 ViT → VLAの推論高速化レポートを作りながら学ぶ 〜
 
 ## ゴール
 
 1. コンピュータアーキテクチャの概要を理解している
 2. 高速化に必要な要素を理解している（CPU / GPU）
 3. VLAの基本アーキテクチャ（Vision / LLM / Planner）を理解している
-4. **【成果物】** 小型VLA（SmolVLA）の推論を計測・分析・高速化し、「なぜ速くなったか」を説明したレポートをGitHubで公開している
-   - PyTorchレベルの高速化に加え、**Vision EncoderをONNX → TensorRT（FP16 / INT8）に変換するエッジ向けの移植作業**まで含める
+4. **【成果物】** 推論を計測・分析・高速化し、「なぜ速くなったか」を説明したレポートをGitHubで公開している
+   - ViT-B/16で、PyTorchでの高速化と **ONNX → TensorRT（FP16 / INT8）へのエッジ向け移植** を一通り行う
+   - 同じ手順を小型VLA（SmolVLA）に当てはめ、VLAのどこが重いかを分析する
 
-## 進め方
+## 毎日の構成
 
-毎日 **「理論（午前の部）」→「成果物の作業（午後の部）」** の2本立てで進める。その日に学んだ理論を、その日のうちにSmolVLAで確かめる。
+各Dayは次の5つで構成している。上から順に進める。
 
-- 1日あたり3〜4時間（理論1.5時間＋成果物2時間程度）
-- 成果物の作業は **Google Colab（T4 GPU）** で行う。手元のM1 Mac（メモリ8GB）は、教材を読むこととCPU側の軽い実験に使う
-- 毎日の最後に「理解チェックポイント」を **何も見ずに口頭で説明できるか** 確認する
-- 7日で終わらなかった作業のために **予備日を2日** 見ておく（主にレポートの仕上げ用）
-- 教材はできるだけ日本語を使う。日本語の教材がないもの（Roofline、VLA）だけ英語を使い、🇬🇧 マークを付けている
+| 項目 | 内容 |
+|---|---|
+| **① 読む範囲** | どの本の、どの章・節を、どの深さで読むか（精読／流し読み／飛ばす） |
+| **② 本の内容と実装の対応** | 読んだ内容のうち、どれを実装で確かめ、どれは確かめないか |
+| **③ 実装に必要な理解のレベル** | 「ここまで分かっていれば実装に進んでよい」という目安 |
+| **④ 実装ステップ** | 具体的な手順と、その日に残す成果物 |
+| **⑤ 理解チェックポイント** | 1日の最後に、何も見ずに口頭で説明できるか確認する |
 
-## 題材：SmolVLA を選ぶ理由
+**読み方の記号**
+- **精読**：図を自分で描き直せるまで読む
+- **流し読み**：見出しと図と太字を追い、「こういう話がある」と分かれば十分
+- **飛ばす**：今回のゴールには不要
 
-- Hugging Faceが公開している **約4.5億パラメータの小型VLA**（`lerobot/smolvla_base`）。T4（16GB）で余裕を持って動く
-- **Vision（SigLIP系のViT）＋ LLM（SmolVLM2の前半の層）＋ Planner（flow matchingのaction expert、約1億パラメータ）** という構成で、ゴール3の3つのブロックがそのまま揃っている
-- 性質の違う部品が1つのモデルに入っているため、**部品ごとに「memory-bound か compute-bound か」が変わる**。高速化の効果の違いが見えやすい
-- ロボットの実機やシミュレータがなくても、LeRobotの公開データセットのサンプルを入力にすれば推論できる
+## 前提
 
-## 使うGPUとツールの整理
+- 1日あたり3〜4時間（読む1.5時間＋実装2時間程度）。7日で終わらなかった作業のために **予備日を2日** 見ておく
+- 実装は **Google Colab（T4 GPU）** で行う。手元のM1 Mac（メモリ8GB）は、本を読む、READMEやコードを編集する、CPUの軽い実験に使う
+- 教材はできるだけ日本語を使う。日本語の教材がないもの（Roofline、TensorRT、VLA）だけ英語を使い、🇬🇧 マークを付けている
 
-| ツール | T4での扱い | この計画での使い方 |
+## 教材
+
+| 略称 | 教材 | 形式 | 使う日 |
+|---|---|---|---|
+| **キタミ式** | 『キタミ式イラストIT塾 基本情報技術者』（技術評論社） | 紙／電子版 | Day 1〜2 |
+| **CPU本** | 『プログラマーのためのCPU入門』（ラムダノート） | PDF版あり | Day 1〜2, 4 |
+| **GPU本** | 『[増補改訂]GPUを支える技術』（技術評論社） | 電子版あり | Day 3〜6 |
+| **ViT本** | 『Vision Transformer入門』（技術評論社） | 紙／電子版 | Day 6〜7 |
+| 🇬🇧 Horace He | "Making Deep Learning Go Brrrr From First Principles"（horace.io） | Web | Day 4 |
+| 🇬🇧 TensorRT | NVIDIA TensorRT Developer Guide / Support Matrix | Web | Day 6 |
+| 🇬🇧 VLA論文 | RT-2 / OpenVLA / π0 / SmolVLA（arXiv:2506.01844） | arXiv | Day 7 |
+| Zenn / Qiita | 各日に検索キーワードを記載 | Web | 全日 |
+
+※ 新装版のフルカラーのコンピュータアーキテクチャ入門書が手元にあれば、キタミ式の代わりに第7・8章（Day 1）、第10章（Day 2）を使ってよい
+
+## 題材
+
+| Day | 題材 | 理由 |
 |---|---|---|
-| PyTorch（FP16、SDPA、`torch.compile`） | ◎ | Day 3〜5 の高速化 |
-| **TensorRT（通常版）** | ◎ 正式対応（FP16 / INT8のTensor Coreが使える） | **Day 6：Vision EncoderをONNX経由でエンジン化** |
-| bitsandbytes（INT8 / 4bit） | ○ | Day 5（任意）：「メモリは減るが速くならない」例として |
+| 1〜6 | **ViT-B/16**（`timm` の `vit_base_patch16_224`、約8,600万パラメータ） | 経験のあるモデルで中身に迷わない。行列積（compute-bound）とLayerNorm・GELU・softmax（memory-bound）が混ざっていてRooflineの題材に向く。ImageNetの学習済みモデルなので **Imagenetteで精度を評価できる** |
+| 6後半〜7 | **SmolVLA**（`lerobot/smolvla_base`、約4.5億パラメータ） | Vision（ViT系）＋ LLM ＋ Planner（flow matchingのaction expert）がそろった小型VLA |
+
+## 使うGPUとツール
+
+| ツール | T4での扱い | 使う日 |
+|---|---|---|
+| PyTorch（FP16、SDPA、`torch.compile`） | ◎ | Day 2〜5 |
+| ONNX Runtime | ◎ | Day 6（ONNXの出力確認） |
+| TensorRT（通常版） | ◎ 正式対応（FP16 / INT8のTensor Core） | Day 6 |
 | TensorRT-LLM | △ T4はコミュニティサポートのみ | 使わない |
-| TensorRT-Edge-LLM | × T4は対象外（Ampere以降・Jetson/DRIVE向け） | 「その先」でAWSのg5 / g6を使って試す |
-| ReCogDrive | × FP16では重みだけで約16GB、データも大きい | 「その先」でAWSのg6（L4, 24GB）を使って試す |
+| TensorRT-Edge-LLM、ReCogDrive | × T4では動かない／載らない | 「その先」でAWSのg5 / g6を使う |
 
 - T4は **BF16、FP8、FlashAttention-2に対応していない**。FP16とINT8を使う
 
 ## 全体像
 
-| Day | 理論 | 成果物の作業 |
-|---|---|---|
-| 1 | メモリ階層とキャッシュ | 環境構築、SmolVLAを動かす、モデルサイズを把握 |
-| 2 | CPUの高速化の仕組み | 計測の仕組みを作る、CPUでのベースライン |
-| 3 | GPUアーキテクチャ | GPUでのベースライン、FP32 vs FP16 |
-| 4 | ボトルネック分析（Roofline） | 部品ごとのプロファイル、Roofline図 |
-| 5 | 深層学習の高速化手法 | PyTorchで高速化手法を1つずつ適用して計測 |
-| 6 | ViT → VLM ＋ TensorRTの基礎 | **Vision EncoderをTensorRT化（FP16 / INT8 PTQ）** |
-| 7 | VLA（Vision / LLM / Planner） | Planner側の解析（flow matchingのステップ数）、レポート作成 |
-
-## 教材一覧
-
-| 教材 | 形式 | 使う日 | ひとこと |
+| Day | テーマ | 主に読む本 | 実装の成果物 |
 |---|---|---|---|
-| 『キタミ式イラストIT塾 基本情報技術者』（技術評論社） | 紙／電子版 | Day 1〜2 | ほぼ全ページがイラスト。コンピュータ構成の章だけ使う |
-| 『プログラマーのためのCPU入門』（ラムダノート） | **PDF版（購入後すぐDL）** | Day 1〜2 | 高速化の視点。キャッシュ・パイプライン・データ依存の章 |
-| 『[増補改訂]GPUを支える技術』（技術評論社） | **電子版あり** | Day 3〜4 | GPUの構造をコードなしで理解できる |
-| 『Vision Transformer入門』（技術評論社） | 紙／電子版 | Day 6 | ViT〜マルチモーダルまで日本語で整理されている |
-| Zenn / Qiita の解説記事 | Web | 全日 | 各日に検索キーワードを記載 |
-| 🇬🇧 Horace He "Making Deep Learning Go Brrrr From First Principles" | Web | Day 4 | 日本語で代わりになる教材がないため必読。図が多い |
-| Zenn / Qiita の TensorRT 解説記事 | Web | Day 6 | 「TensorRT 入門 ONNX」「TensorRT INT8 量子化」で検索 |
-| 🇬🇧 NVIDIA TensorRT Developer Guide / Support Matrix | Web | Day 6 | 量子化の章と、T4で使える精度の表 |
-| 🇬🇧 Hugging Face Blog "SmolVLA: Efficient Vision-Language-Action Model…" | Web | Day 1, 6, 7 | 成果物の題材の公式解説 |
-| 🇬🇧 SmolVLA論文（arXiv:2506.01844） | arXiv | Day 6〜7 | アーキテクチャの図と説明の段落だけ |
-| 🇬🇧 RT-2 / OpenVLA / π0 の論文 | arXiv | Day 7 | SmolVLAと比較するため。図だけで可 |
+| 1 | メモリ階層とキャッシュ | キタミ式、CPU本 第5章 | ViTの重み・中間データのサイズとキャッシュの比較表、推論時間の下限 |
+| 2 | CPUの高速化 | CPU本 第2〜3章、第9章 | `bench.py`、CPUのスレッド数ごとのレイテンシ、アムダールの法則での分析 |
+| 3 | GPUアーキテクチャ | GPU本 第1・4・6章 | T4の仕様と実測バンド幅、CPU vs GPU、FP32 vs FP16、バッチサイズの表 |
+| 4 | ボトルネック分析（Roofline） | Horace He、CPU本 第13章 | Roofline図、演算子ごとの時間の内訳 |
+| 5 | 深層学習の高速化 | GPU本 第5章、解説記事 | 手法ごとのレイテンシの表とグラフ |
+| 6 | TensorRT ＋ ViT → VLM | TensorRT、ViT本 第2章 | TensorRT FP16 / INT8 の比較表（速度・精度） |
+| 7 | VLA | ViT本 第5章、VLA論文 | SmolVLAの部品ごとの分析、レポート |
 
-※ 手元に新装版のフルカラーのコンピュータアーキテクチャ入門書があれば、Day 1は第7・8章、Day 2は第10章を図解教材として使う（キタミ式の代わりにしてよい）
-
-## 成果物のリポジトリ構成（最終形）
+## リポジトリ構成（最終形）
 
 ```
-smolvla-inference-optimization/
-├── README.md              # レポート本体（結果表・グラフ・考察）
+computer_arch_VLA/
+├── README.md                  # レポート本体
+├── .gitignore
 ├── notebooks/
-│   ├── 01_setup_and_run.ipynb       # Day 1
-│   ├── 02_benchmark_baseline.ipynb  # Day 2〜3
-│   ├── 03_profile_roofline.ipynb    # Day 4
-│   ├── 04_optimizations.ipynb       # Day 5
-│   ├── 05_vision_tensorrt.ipynb     # Day 6
-│   └── 06_planner_analysis.ipynb    # Day 7
+│   ├── 01_vit_size_vs_cache.ipynb     # Day 1
+│   ├── 02_vit_cpu_baseline.ipynb      # Day 2
+│   ├── 03_vit_gpu_baseline.ipynb      # Day 3
+│   ├── 04_vit_profile_roofline.ipynb  # Day 4
+│   ├── 05_vit_optimizations.ipynb     # Day 5
+│   ├── 06_vit_tensorrt.ipynb          # Day 6
+│   └── 07_smolvla_analysis.ipynb      # Day 7
 ├── src/
-│   ├── bench.py           # 計測用の共通関数
-│   └── export_vision.py   # Vision EncoderのONNX出力・TensorRTエンジン作成
-└── figures/               # Roofline図、レイテンシのグラフなど
+│   ├── bench.py               # 計測の共通関数（bench, save_result）
+│   ├── gpu_info.py            # GPUの仕様の取得（L2、SM数、バンド幅など）
+│   ├── eval_imagenette.py     # Imagenetteでの精度評価
+│   └── export_trt.py          # ONNX出力・TensorRTエンジン作成
+├── results/                   # 計測結果のCSV
+└── figures/                   # グラフ、Roofline図
 ```
+
+- GitHubを正本にし、M1 MacとColabの両方からclone / pushする。ColabではHTTPS＋Personal Access Token（Colabのシークレットに保存）でcloneする。**トークンはセルに直接書かない**
+- Colabの環境はセッションが切れると消える。**計測結果のCSVとグラフは、終了前に必ずpushする**
+- モデルの重み、ONNX、TensorRTのエンジン、データセットは `.gitignore` で除外する
 
 ---
 
-## Day 1：メモリ階層とキャッシュ ／ SmolVLAを動かす
+## Day 1：メモリ階層とキャッシュ
 
-### 理論
-**教材**
-1. 『キタミ式』：コンピュータ構成要素（CPU・メモリ・キャッシュ）の章で、図で全体像をつかむ
-2. 『プログラマーのためのCPU入門』（PDF版）：キャッシュ・メモリ関連の章
-- （補助）Zenn / Qiita で「キャッシュ 局所性」「レイテンシ 一覧 プログラマ」を検索
+**この日のゴール**：「データはどこにあり、どれくらいの速さで届くか」を説明でき、ViTのデータがキャッシュに収まるかどうかを数字で示せる
 
-**学習内容** 
-- <input type="checkbox" checked> メモリ階層：レジスタ → L1 → L2 → L3 → DRAM → SSD
-- キャッシュライン（64バイト）、ヒット／ミス
-- 時間的局所性（同じデータを再利用）と空間的局所性（近くのデータを連続で使う）
-- レイテンシとバンド幅の違い、メモリウォール
+### ① 読む範囲（約1.5時間）
 
-**小演習（M1でOK）**：NumPyで行方向と列方向の合計を比較する（`a.sum(axis=1)` と `a.sum(axis=0)`）
+| 本 | 章・節 | 読み方 | 目的 |
+|---|---|---|---|
+| キタミ式 | CPU・メモリ・キャッシュのページ（試験分野の「コンピュータ構成要素」） | 流し読み（30分） | 図で全体像をつかむ |
+| CPU本 | 第5章 5.1 メモリアクセスに伴うパイプラインの停滞 | 精読 | メモリが遅いと何が困るか |
+| CPU本 | 第5章 5.2 キャッシュメモリによる緩和 | 精読 | キャッシュの仕組み、キャッシュライン、局所性 |
+| CPU本 | 第5章 5.3 初期参照ミス ／ 5.4 容量性ミス | 精読 | キャッシュが効かない2つのケース |
+| CPU本 | 第5章 5.5 競合性ミス | 流し読み | 今回の実装では扱わない |
+| CPU本 | 第5章 5.6 キャッシュミスの測定 | 流し読み | 測り方の考え方だけ |
+| CPU本 | 第6章 仮想記憶 | 飛ばす | 今回のゴールには不要 |
+| GPU本 | 第1章 1.4 CPUとGPUの違い | 流し読み | 明日以降のGPUの話の予告として |
 
-### 成果物の作業
-1. GitHubにリポジトリを作る
-2. Colabで LeRobot をインストールし、SmolVLAを読み込んで1回推論する
+### ② 本の内容と実装の対応
+
+| 本で学ぶこと | 実装で確かめること |
+|---|---|
+| <input type="checkbox" checked>メモリ階層（レジスタ → L1 → L2 → DRAM） | <input type="checkbox" checked>T4のL1・L2・VRAMの容量を取得して並べる |
+| <input type="checkbox" checked>キャッシュライン、空間的局所性 | <input type="checkbox" checked>NumPyで行方向と列方向の合計の速度を比べる |
+| <input type="checkbox" checked>容量性ミス（5.4） | <input type="checkbox" checked>ViTの重みがL2に収まらない → 推論のたびにVRAMから読み直すことを、サイズの計算で示す |
+| <input type="checkbox" checked>初期参照ミス（5.3） | <input type="checkbox">Day 2の計測でウォームアップを入れる理由として使う（今日は実装しない） |
+| <input type="checkbox" checked>競合性ミス（5.5） | <input type="checkbox">確かめない |
+
+### ③ 実装に必要な理解のレベル
+
+- 「近い階層ほど小さくて速い」「DRAM（VRAM）は計算に比べて圧倒的に遅い」と言える
+- キャッシュが効くのは「同じデータを再利用する」「近くのデータを続けて使う」ときだと言える
+- 「キャッシュに収まらないデータは、使うたびに遠くから取ってくるしかない（容量性ミス）」と言える
+- GPUではL2が全SMで共有の最後のキャッシュで、L1はSMごとに分かれている、と知っている（詳しくはDay 3）
+
+### ④ 実装ステップ（約2時間）
+
+1. **リポジトリを準備する**（30分）
+   - GitHubでprivateリポジトリを作る（`.gitignore` はPythonのテンプレート＋ `*.onnx` `*.engine` `*.pt` `*.safetensors` `data/` などを追記）
+   - M1 Macにclone、ColabからHTTPS＋トークンでcloneできることを確認する
+2. **空間的局所性を体感する**（10分、M1でOK）
    ```python
-   # pip install "lerobot[smolvla]"
-   from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-   policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base").to("cuda").eval()
+   import numpy as np, time
+   a = np.random.rand(8000, 8000)
+   t = time.perf_counter(); a.sum(axis=1); print("行方向:", time.perf_counter() - t)
+   t = time.perf_counter(); a.sum(axis=0); print("列方向:", time.perf_counter() - t)
    ```
-   - LeRobotはバージョンによってimportのパスが変わる（例：`lerobot.common.policies...`）。動かなければモデルカードとGitHubのREADMEで現行の書き方を確認する
-   - 入力には、LeRobotの公開データセット（例：`lerobot/svla_so100_stacking`）から1サンプル取り出して使う
-3. 部品ごとのパラメータ数を数え、FP32 / FP16 / INT8 のときのサイズ（MB）を計算する
+3. **ViTを読み込んで推論する**（10分）
    ```python
-   for name, m in policy.named_children():
-       print(name, sum(p.numel() for p in m.parameters()) / 1e6, "M")
+   import torch, timm
+   model = timm.create_model("vit_base_patch16_224", pretrained=True).to("cuda").eval()
+   x = torch.randn(1, 3, 224, 224, device="cuda")
+   with torch.inference_mode():
+       print(model(x).shape)   # (1, 1000)
    ```
-4. 計算したサイズを、T4のL2キャッシュ（4MB）やVRAM（16GB）と比べ、メモに残す
+4. **GPUの仕様を取得する**（15分）
+   - L2・SMの数・メモリのクロックとバス幅：NVIDIAドライバ（`libcuda.so`）の `cuDeviceGetAttribute` を `ctypes` で呼んで取得する
+   - L1：APIでは取得できないので、`torch.cuda.get_device_capability()` で世代を取得し、Turing Tuning Guideの値（L1は最大64KB）を当てはめる
+   - 取得するコードは `src/gpu_info.py` にまとめ、以降の日でも使い回す
+5. **重みのサイズを部品ごとに出す**（20分）
+   - モデル直下の部品（patch_embed / blocks / norm / head）と、`cls_token`・`pos_embed`
+   - ブロック1個の中の部品（norm1 / attn.qkv / attn.proj / norm2 / mlp.fc1 / mlp.fc2）
+   - FP32 / FP16 / INT8 のサイズと、L1・L2に収まるか（○✕）←これはやっていない
+6. **中間データのサイズを出す**（20分）
+   - forward hookで各層の出力のshapeを取り、bs=1とbs=64でサイズを計算する
+   - ブロックの出力（197×768）、MLPの途中（197×3072）、attention行列（12×197×197）
+7. **推論時間の下限を計算する**（5分）
+   - 下限 ＝ 重みのサイズ ÷ メモリバンド幅（FP16なら約172MB ÷ 320GB/s ≒ 0.54ms）
+8. **READMEに残す**（10分）：比較表、下限の値、結果から分かったこと（2〜3行）
 
-> この日の時点では、モデルの中身はブラックボックスのままでよい。「動いた」「何MBあるか」まで分かれば十分
+**この日の成果物**：`notebooks/01_vit_size_vs_cache.ipynb`、`src/gpu_info.py`、`results/day1_*.csv`、READMEの比較表
 
-### ✅ 理解チェックポイント
+### ⑤ 理解チェックポイント
 - メモリ階層の各段について、容量と速度の大まかな関係を言える
 - キャッシュが効く理由を、2種類の局所性を使って説明できる
-- 「DRAMの待ち時間が計算より圧倒的に長い」ことがキャッシュの存在理由だと説明できる
-- SmolVLAの重みがFP32で何MBあり、それがキャッシュやVRAMと比べてどのくらいの大きさか言える
+- ViTの重みと中間データが、それぞれL1・L2と比べてどのくらいの大きさか言える
+- 重みがL2に収まらないことから、「推論時間には下限がある」と説明できる
 
 ---
 
-## Day 2：CPUの高速化の仕組み ／ 計測の仕組みを作る
+## Day 2：CPUの高速化の仕組み
 
-### 理論
-**教材**
-1. 『キタミ式』：パイプライン、マルチコアの部分を図で確認
-2. 『プログラマーのためのCPU入門』（PDF版）：パイプライン、スーパースカラ、データ依存、分岐予測、SIMDの章
-- （補助）Zenn / Qiita で「アムダールの法則」「SIMD NumPy なぜ速い」を検索
+**この日のゴール**：CPUが速く動く工夫と、それを邪魔するものを説明でき、スレッド数を増やしても速さが比例しない理由を自分の計測結果で説明できる
 
-**学習内容**
-- パイプライン、スーパースカラ、アウトオブオーダー実行
-- データ依存と分岐予測ミスによるストール
-- SIMD（1命令で複数データを処理）
-- マルチコアとアムダールの法則
-- CPUは「少数の強いコアで待ち時間を短くする」設計
+### ① 読む範囲（約1.5時間）
 
-### 成果物の作業
-1. `src/bench.py` に計測用の関数を作る。以降のすべての計測で使い回す
+| 本 | 章・節 | 読み方 | 目的 |
+|---|---|---|---|
+| キタミ式 | パイプライン、マルチコアのページ | 流し読み（20分） | 図でイメージをつかむ |
+| CPU本 | 第2章 2.1 逐次処理 〜 2.3 スーパースカラ化 | 精読 | 命令を重ねて実行する工夫 |
+| CPU本 | 第2章 2.4 〜 2.5 スーパーパイプライン化 | 流し読み | 名前と概要だけ |
+| CPU本 | 第3章 3.1 データ依存関係とは ／ 3.3 スーパースカラ化への影響 ／ 3.4 アウトオブオーダー実行 | 精読 | 何が並列化を妨げるか |
+| CPU本 | 第3章 3.5 〜 3.7 | 流し読み | 対策の存在だけ知る |
+| CPU本 | 第3章 3.8 命令レイテンシの計測実験 | 飛ばす | アセンブリの実験なので今回は不要 |
+| CPU本 | 第4章 4.1 分岐命令とその課題 ／ 4.3 分岐予測による緩和 | 流し読み | 分岐予測ミスで遅くなることだけ |
+| CPU本 | 第9章 9.1 マルチプロセッサの多様な方式 ／ 9.5 マルチプロセッサを活かすためには ／ 9.7 遅くする要因 | 流し読み | スレッド数の実験の背景 |
+| CPU本 | 第7〜8章、第10〜12章 | 飛ばす | 今回のゴールには不要 |
+| Zenn / Qiita | 「アムダールの法則」「SIMD NumPy なぜ速い」 | 1本ずつ | 実験の分析に使う |
+
+### ② 本の内容と実装の対応
+
+| 本で学ぶこと | 実装で確かめること |
+|---|---|
+| <input type="checkbox" checked>パイプライン、スーパースカラ、アウトオブオーダー（第2〜3章） | **直接は測らない**。PyTorchの内部でCPUが自動でやっていること。結果の考察で言葉として使う |
+| <input type="checkbox" checked>データ依存（第3章） | ViTは「1層目の結果がないと2層目を計算できない」→ 層をまたいだ並列化ができない部分があることを、アムダールの法則の分析で使う |
+| 分岐予測（第4章） | 確かめない |
+| SIMD（Zenn記事） | （任意）Pythonのforループ vs NumPy の速度差 |
+| マルチプロセッサ（第9章）、アムダールの法則 | **スレッド数を1, 2, 4と変えてレイテンシを測り、並列化できている割合 p を逆算する** |
+| 初期参照ミス（Day 1の第5章 5.3） | 計測の前にウォームアップを入れる |
+
+### ③ 実装に必要な理解のレベル
+
+- アムダールの法則 S(n) = 1 / ((1 − p) + p / n) を書けて、「並列化できない部分が上限を決める」と言える
+- データ依存があると、命令（や層）を同時に実行できないと言える
+- 計測では「最初の数回は遅い（初期参照ミスや初期化）ので除く」「ばらつくので中央値とp90を見る」と言える
+
+### ④ 実装ステップ（約2時間）
+
+1. **`src/bench.py` を置く**（15分）：`bench()`（ウォームアップ＋計測、中央値とp90）と `save_result()`（CSVに追記）
+2. **CPUの準備**（10分）
+   - `os.cpu_count()` でColabのCPUのコア数を確認する（たいてい2コア）
+   - ViTを **CPU上に** 読み込む（`.to("cuda")` しない）。`next(model.parameters()).device` で `cpu` を確認する
+3. **スレッド数ごとに測る**（30分）
    ```python
-   import time, statistics, torch
-
-   def bench(fn, n_warmup=10, n_iter=50, cuda=True):
-       for _ in range(n_warmup):
-           fn()
-       times = []
-       for _ in range(n_iter):
-           if cuda: torch.cuda.synchronize()
-           t = time.perf_counter()
-           fn()
-           if cuda: torch.cuda.synchronize()
-           times.append((time.perf_counter() - t) * 1000)
-       times.sort()
-       return {"median_ms": statistics.median(times),
-               "p90_ms": times[int(len(times) * 0.9)]}
+   x = torch.randn(1, 3, 224, 224)
+   def run():
+       with torch.inference_mode():
+           model(x)
+   for n in [1, 2, 4]:
+       torch.set_num_threads(n)
+       r = bench(run, n_warmup=3, n_iter=20, cuda=False)
+       save_result(r, "vit_base_patch16_224", "cpu", "fp32", 1, note=f"threads={n}")
    ```
-2. **flow matchingのノイズを固定する**。SmolVLAは推論ごとにランダムなノイズから行動を生成するので、seedを固定しないと手法ごとの出力を比較できない
-3. 「基準の出力」としてFP32の推論結果（行動のchunk）を保存しておく。Day 5以降、高速化で出力がどれだけずれたかをこれと比べる
-4. **CPUでのベースライン**：ColabのCPUで、スレッド数（`torch.set_num_threads`）を1, 2, 4と変えてレイテンシを測る。スレッド数を倍にしても速度が倍にならない理由を、アムダールの法則で考える
+4. **アムダールの法則で分析する**（20分）
+   - 倍率 S2 ＝ 1スレッドの時間 ÷ 2スレッドの時間
+   - 並列化できている割合 p ＝ (1 − 1/S2) ÷ (1 − 1/2)
+   - コアを無限に増やしたときの最大倍率 ＝ 1 / (1 − p)
+   - コア数より多いスレッド（2コアで4スレッド）で速くならない理由も考える
+5. **（任意）M1 Macでも測る**（20分）：スレッド数1, 2, 4, 8。高性能コア4つ＋高効率コア4つなので、4を超えたところで伸び方が変わるかを見る
+6. **（任意）SIMDを体感する**（10分）：同じ足し算をPythonのforループとNumPyで比べる
+7. **READMEに残す**（15分）：スレッド数ごとの表、p と最大倍率、速くならない理由の考察（3〜5行）
 
-### ✅ 理解チェックポイント
+**この日の成果物**：`src/bench.py`、`notebooks/02_vit_cpu_baseline.ipynb`、`results/benchmarks.csv`、READMEの表と考察
+
+### ⑤ 理解チェックポイント
 - パイプラインで「1命令の時間は変わらないのにスループットが上がる」理由を説明できる
-- データ依存と分岐予測ミスが高速化を妨げる理由を説明できる
-- アムダールの法則を式で書け、スレッド数を増やした実験結果と結びつけて説明できる
+- スーパースカラで同時に実行できるのは、依存関係がない命令だけだと説明できる
+- アムダールの法則を式で書け、自分の計測結果から p を求めて説明できる
 - 計測でウォームアップと中央値／p90を使う理由を説明できる
 
 ---
 
-## Day 3：GPUアーキテクチャ ／ GPUでのベースライン
+## Day 3：GPUアーキテクチャ
 
-### 理論
-**教材**
-1. 『[増補改訂]GPUを支える技術』（電子版）：CPUとGPUの違い、SIMT、超並列処理、GPUのメモリとデータ転送の章
-- （補助）Zenn / Qiita で「GPU アーキテクチャ SM warp」「Tensor Core 仕組み」を検索
-- （補助）🇬🇧 Modal "GPU Glossary"：用語を1つずつ図つきで説明しているサイト
+**この日のゴール**：GPUの構造を図で描け、CPUとの設計思想の違いと、FP16やバッチサイズで速くなる理由を自分の計測結果で説明できる
 
-**学習内容**
-- GPU → SM → warp（32スレッド）→ スレッド、SIMT
-- GPUのメモリ階層：レジスタ → shared memory / L1 → L2 → HBM（VRAM）
-- CUDAコアとTensor Core、対応する精度
-- coalesced access、occupancyとレイテンシ隠蔽
-- CPU⇔GPU間の転送（PCIe）
-- GPUは非同期に実行されるので、計測には `torch.cuda.synchronize()` が必要
+### ① 読む範囲（約1.5時間）
 
-### 成果物の作業
-1. T4の仕様を調べてREADMEに表で載せる：FP32とFP16（Tensor Core）のピーク性能、メモリバンド幅、L2キャッシュ容量、VRAM容量
-   - **T4はBF16とFlashAttention-2に対応していない**（FP16とINT8は使える）。なぜ対応していないか（GPUの世代）も調べて書く
-2. GPUでFP32のベースラインを測る（bs=1のレイテンシ、ピークメモリ `torch.cuda.max_memory_allocated()`）
-3. **CPU vs GPU** でレイテンシを比べる。入力をCPUからGPUへ転送する時間も別に測る
-4. **FP32 vs FP16**（`policy.half()` または `torch.autocast`）で比べる。速度、メモリ、基準出力からのずれ（MSE、最大誤差）を記録する
+| 本 | 章・節 | 読み方 | 目的 |
+|---|---|---|---|
+| GPU本 | 第1章 1.4 CPUとGPUの違い | 精読 | 設計思想の違い |
+| GPU本 | 第1章 1.6 GPUとおもな処理方式 | 流し読み | SIMD / SIMTの用語 |
+| GPU本 | 第4章 4.1 GPUの並列処理方式 ／ 4.2 GPUの構造 | 精読 | SIMT、SM、warp、メモリ階層 |
+| GPU本 | 第4章 4.3 〜 4.5 | 飛ばす | AMD・Armの話、エラー訂正は不要 |
+| GPU本 | 第6章 6.1 GPUのデバイスメモリ ／ 6.2 CPUとGPU間のデータ伝送 | 精読 | VRAMのバンド幅、PCIe |
+| GPU本 | 第5章 5.2 CUDA | 流し読み | スレッド・ブロック・グリッドの考え方だけ |
+| GPU本 | 第2〜3章 | 飛ばす | グラフィックスの歴史は不要 |
+| CPU本 | 付録E E.1 GPUにおける高密度化のアプローチ | 流し読み | Day 2のパイプラインの話とGPUをつなぐ |
+| Zenn / Qiita | 「Tensor Core 仕組み」 | 1本 | FP16の比較の背景 |
 
-### ✅ 理解チェックポイント
+### ② 本の内容と実装の対応
+
+| 本で学ぶこと | 実装で確かめること |
+|---|---|
+| CPUとGPUの違い（1.4） | 同じViTの推論をCPU（Day 2）とGPUで比べる |
+| SIMT、warp、大量のスレッドで待ち時間を隠す（4.1〜4.2） | バッチサイズを上げるとスループットが上がり、どこかで頭打ちになることを確かめる |
+| デバイスメモリのバンド幅（6.1） | 大きなテンソルのコピーで、T4の **実測バンド幅** を測る。Day 1の下限を実測値で計算し直す |
+| CPUとGPU間のデータ伝送（6.2） | 入力をCPUからGPUへ転送する時間を測る |
+| Tensor Core（記事） | FP32 vs FP16 で速度を比べる |
+| CUDAのプログラミング（5.2） | 確かめない（カーネルは書かない） |
+
+### ③ 実装に必要な理解のレベル
+
+- GPU → SM（T4は40個）→ warp（32スレッド）という階層を言える
+- GPUは「大量のスレッドを切り替えて待ち時間を隠す」設計で、仕事が少ない（bs=1）と使い切れないと言える
+- Tensor CoreはFP16などで行列積を高速に計算する専用ユニットだと言える
+- GPUは非同期に動くので、時間を測るときは `torch.cuda.synchronize()` が必要だと言える
+
+### ④ 実装ステップ（約2時間）
+
+1. **T4の仕様をまとめる**（15分）
+   - `src/gpu_info.py` でSM数・L2・バンド幅（理論値）を取得する
+   - FP32とFP16（Tensor Core）のピーク性能は、NVIDIAの仕様表で調べる
+   - BF16とFlashAttention-2に対応していない理由（Turing世代）も書く
+2. **実測バンド幅を測る**（15分）
+   ```python
+   x = torch.empty(512 * 1024**2, dtype=torch.uint8, device="cuda"); y = torch.empty_like(x)
+   r = bench(lambda: y.copy_(x))
+   print("実測バンド幅:", 2 * x.numel() / (r["median_ms"] / 1000) / 1e9, "GB/s")  # 読み＋書きで2倍
+   ```
+   - 理論値（約320GB/s）と比べ、Day 1の下限を実測値で計算し直す
+3. **CPU vs GPU**（15分）：bs=1、FP32で、GPUのレイテンシを測ってDay 2のCPUと比べる
+4. **転送時間を測る**（10分）：CPU上の入力を `.to("cuda")` する時間だけを別に測る
+5. **FP32 vs FP16**（25分）
+   - `model.half()` と `x.half()` でFP16にして測る
+   - レイテンシ、ピークメモリ（`torch.cuda.max_memory_allocated()`）
+   - FP32の出力とのずれ：ロジットの最大誤差、top-1が一致するか
+6. **バッチサイズを変える**（25分）
+   - bs=1, 8, 32, 64 で、FP16のレイテンシとスループット（枚/秒）を測る
+   - スループットのグラフを `figures/` に保存する
+7. **Day 1の下限と比べる**（5分）：bs=1のFP16のレイテンシは、下限（約0.5ms）の何倍か
+8. **READMEに残す**（10分）：T4の仕様表、比較表、グラフ、考察
+
+**この日の成果物**：`notebooks/03_vit_gpu_baseline.ipynb`、`results/benchmarks.csv`（追記）、スループットのグラフ、READMEの表と考察
+
+### ⑤ 理解チェックポイント
 - SM / warp / スレッドの関係を図に描ける
 - GPUは「大量のスレッドで待ち時間を隠す」設計だと、CPUとの対比で説明できる
-- Tensor Coreが何のためのユニットか、T4ではどの精度で使えるか言える
-- FP16で速くなった理由を「Tensor Core」と「データ量が半分になる」の2つの観点で説明できる
-- GPUの計測に `synchronize` が必要な理由を説明できる
+- FP16で速くなった理由を「Tensor Core」と「データ量が半分」の2つの観点で説明できる
+- bs=1ではGPUを使い切れず、bsを上げるとスループットが上がる理由を説明できる
+- 実測のレイテンシが下限より遅い理由の仮説を言える（Day 4で確かめる）
 
 ---
 
-## Day 4：ボトルネック分析（Roofline）／ 部品ごとのプロファイル ★最重要日
+## Day 4：ボトルネック分析（Roofline）★最重要日
 
-### 理論
-**教材**
-1. Zenn / Qiita で「Roofline モデル」「演算強度 memory bound」を検索し、図つきの解説記事を1〜2本読む
-2. 🇬🇧 **Horace He "Making Deep Learning Go Brrrr From First Principles"** ← 必読
-3. 『GPUを支える技術』：メモリバンド幅とデータ転送の章を、演算強度の観点で読み直す
+**この日のゴール**：ある処理が「計算が律速」か「メモリが律速」かを、自分で描いたRoofline図で判断できる
 
-**学習内容**
-- ボトルネックの3分類：compute-bound / memory-bound / overhead-bound
-- 演算強度 ＝ FLOPs ÷ 転送バイト数
-- Roofline図：屋根の折れ点 ＝ ピークFLOPS ÷ メモリバンド幅
-- 行列積は演算強度が高く、要素ごとの演算（加算、GELU、LayerNorm）は低い
-- バッチサイズを上げると、重みの再利用が増えて演算強度が上がる
+### ① 読む範囲（約1.5時間）
 
-### 成果物の作業
-1. **Roofline図の土台を作る**：T4で、サイズを変えた行列積（N=128〜8192）と要素ごとの演算を測り、達成FLOPSと演算強度をプロットする。T4のピーク性能とバンド幅から屋根の線を引く
-2. **部品ごとに時間を分解する**：`torch.profiler` でSmolVLAの1回の推論を記録し、Vision Encoder / VLM（LLM部分）/ action expert のどこに時間を使っているかを集計する
-   - `torch.profiler.record_function("vision")` などで区間に名前を付けると集計しやすい
-3. 時間を多く使っている演算子の上位10個を表にする
-4. 各部品について、bs=1での演算強度を概算し、手順1のRoofline図にプロットする。memory-boundか compute-boundか判定する
-5. **振り返り**：以前GPUのFLOPSから学習時間を見積もったとき、実測とずれた原因の仮説を、この図を使って書き直す
+| 教材 | 範囲 | 読み方 | 目的 |
+|---|---|---|---|
+| Zenn / Qiita | 「Roofline モデル」「演算強度 memory bound」 | 1〜2本 | 日本語で全体像をつかむ |
+| 🇬🇧 Horace He | 全体（Compute / Memory Bandwidth / Overheadの3節） | 精読 | 3つのボトルネックの考え方 |
+| GPU本 | 第6章 6.1 GPUのデバイスメモリ | 読み直し | 演算強度の観点で読み直す |
+| CPU本 | 第13章 13.1 〜 13.3 高速なソフトウェアを書く際には何に注目すべきか | 流し読み | CPU側の視点での「何を優先すべきか」 |
 
-### ✅ 理解チェックポイント
-- 3つのボトルネックを、それぞれ例を挙げて説明できる
-- 演算強度を定義でき、行列積と要素演算で値が大きく違う理由を説明できる
+### ② 本の内容と実装の対応
+
+| 学ぶこと | 実装で確かめること |
+|---|---|
+| compute / memory / overhead の3分類 | ViTの演算子ごとの時間を、3つのどれに当たるか分類する |
+| 演算強度 ＝ FLOPs ÷ バイト数 | Linear、LayerNorm、GELU、softmaxの演算強度を手計算する |
+| Roofline図 | 行列積と要素演算を実測して、T4のRoofline図を自分で描く |
+| バッチサイズで演算強度が変わる | bs=1とbs=64で、図の上の点の位置がどう動くかを見る |
+
+### ③ 実装に必要な理解のレベル
+
+- 演算強度の定義を言え、行列積は高く、要素ごとの演算は低いと言える
+- Roofline図の横軸・縦軸・屋根の折れ点（ピークFLOPS ÷ バンド幅）の意味を言える
+- 折れ点より左はmemory-bound、右はcompute-boundと言える
+
+### ④ 実装ステップ（約2時間）
+
+1. **Roofline図の土台を作る**（40分）
+   - 行列積（FP16、N=128, 256, …, 8192）の時間を測り、達成FLOPS（2N³ ÷ 時間）と演算強度（2N³ ÷ 3N²×2バイト）を計算する
+   - 要素ごとの演算（`x + y`、GELU）も同様に測る
+   - 屋根の線（ピークFLOPSと実測バンド幅）を引き、点をプロットする
+2. **ViTの演算子ごとの時間を測る**（30分）
+   - `torch.profiler` でFP16、bs=1の推論を記録する
+   - 上位10個の演算子と、種類ごと（行列積／LayerNorm／GELU／softmax／その他）の時間の割合を表にする
+3. **ViTの演算の演算強度を手計算する**（20分）
+   - Linear（768→3072）、LayerNorm、GELU、softmaxのFLOPsとバイト数
+   - 手順1の図にプロットし、memory-boundかcompute-boundか判定する
+4. **bs=64で同じことをする**（15分）：内訳と図の上の位置の変化を見る
+5. **振り返り**（5分）：以前GPUのFLOPSから学習時間を見積もったとき、実測とずれた原因を、この図を使って書き直す
+6. **READMEに残す**（10分）：Roofline図、演算子の内訳の表、判定結果、考察
+7. （任意）MobileNetV2でも同じプロファイルをして、CNNとの違いを見る
+
+**この日の成果物**：`notebooks/04_vit_profile_roofline.ipynb`、`figures/roofline.png`、READMEの図と表
+
+### ⑤ 理解チェックポイント
+- 3つのボトルネックを、それぞれViTの例を挙げて説明できる
 - Roofline図を何も見ずに描き、折れ点の意味を説明できる
-- SmolVLAのどの部品がmemory-boundで、どれがcompute-boundかを、自分の計測結果を使って言える
+- ViTのどの演算がmemory-boundで、どれがcompute-boundかを、自分の結果で言える
+- bsを上げると図の上の点がどう動くか説明できる
 - FLOPSだけで処理時間を見積もると外れる理由を説明できる
 
 ---
 
-## Day 5：深層学習の高速化手法 ／ 手法を1つずつ適用する
+## Day 5：深層学習の高速化手法
 
-### 理論
-**教材**
-1. Zenn / Qiita で以下を検索し、各テーマ1本ずつ解説記事を読む
-   - 「FlashAttention 解説」「kernel fusion」「torch.compile 仕組み」
-   - 「混合精度 AMP」「量子化 推論 高速化 INT8」「LLM.int8 遅い」
-   - 「KV cache 仕組み」「LLM 推論 memory bound decode」
-2. 🇬🇧 FlashAttention論文（arXiv:2205.14135）：IntroductionとFigure 1だけ
+**この日のゴール**：主な高速化手法が「Day 4のどのボトルネックを解消しているか」を、自分の計測結果で説明できる
 
-**学習内容：各手法が解消するボトルネック**
+### ① 読む範囲（約1.5時間）
 
-| 手法 | 何を減らすか | 主に効くボトルネック |
-|---|---|---|
-| kernel fusion / `torch.compile` | HBMへの書き戻し・カーネル起動回数 | memory / overhead |
-| FlashAttention / SDPA | N×Nのattention行列をHBMに書かない | memory |
-| FP16 | 転送バイト数を減らし、Tensor Coreを使えるようにする | memory / compute |
-| 量子化（INT8/4bit） | 重みの転送バイト数 | memory（ただし逆量子化の処理が増える） |
-| batching | 重み1回の読み込みあたりの計算を増やす | memory |
-| KV cache | 同じ部分の再計算 | compute（代わりにメモリを消費） |
-| CUDA Graphs | カーネル起動のオーバーヘッド | overhead |
+| 教材 | 範囲 | 読み方 | 目的 |
+|---|---|---|---|
+| GPU本 | 第5章 5.4 GPUプログラムの最適化 | 精読 | coalesced access、shared memoryの使い方（tilingの考え方） |
+| GPU本 | 第7章 7.1 ディープラーニングとGPU | 流し読み | DLでGPUが使われる理由 |
+| Zenn / Qiita | 「FlashAttention 解説」「kernel fusion」「torch.compile 仕組み」「CUDA Graphs」 | 各1本 | 今日試す手法の仕組み |
+| 🇬🇧 FlashAttention論文 | IntroductionとFigure 1だけ | 流し読み | 日本語記事の後なら図だけで分かる |
 
-### 成果物の作業
-Day 3のFP16版を基準にして、**手法を1つずつ足しては計測**する。毎回「レイテンシ（中央値/p90）・ピークメモリ・基準出力からのずれ」の3つを記録する。
+### ② 本の内容と実装の対応
 
-1. **attentionの実装**：SDPA（`F.scaled_dot_product_attention`）が使われているか確認し、素朴な実装と比べる
-2. **`torch.compile`**：初回のコンパイル時間と、2回目以降の速度を分けて記録する
-3. **batching**：bs=1, 4, 16, 32 でレイテンシとスループット（サンプル/秒）を測る。Day 4のRoofline図で、bsを上げると点がどう動くか確認する
-4. **（任意）bitsandbytesでの量子化**：INT8 / 4bitで、LLM部分の重みを量子化する
-   - **速くならない、むしろ遅くなる可能性が高い**。メモリは減るのに遅くなる理由（逆量子化の処理、外れ値の分離処理、bs=1では計算が少ない）をプロファイル結果から説明する
-   - 翌日のTensorRTのINT8（Tensor CoreでINT8のまま計算する）と比べると、「量子化すれば速くなるわけではなく、ハードでINT8のまま計算できるかが鍵」という対比になる
-5. 結果を1つの表とグラフ（手法ごとのレイテンシの積み上げ）にまとめる
-6. Day 4のプロファイルから、**Vision Encoderが全体の何%の時間を使っているか**を確認しておく（翌日TensorRT化したとき、全体がどれだけ速くなるかをアムダールの法則で予想するため）
+| 手法 | 何を減らすか | 効くボトルネック | 実装で確かめること |
+|---|---|---|---|
+| shared memoryの活用・tiling（5.4） | VRAMへのアクセス回数 | memory | 直接は書かない。SDPA・FlashAttentionの中身として理解する |
+| SDPA / FlashAttention | attention行列をVRAMに書かない | memory | SDPAあり／なしの比較。解像度を上げてトークン数を増やしたときの差 |
+| kernel fusion（`torch.compile`） | VRAMへの書き戻し・カーネル起動回数 | memory / overhead | `torch.compile` の前後の比較、プロファイルでLayerNormやGELUが融合されたか |
+| CUDA Graphs | カーネル起動の待ち時間 | overhead | `mode="reduce-overhead"` の比較（特にbs=1） |
+| batching | 重み1回の読み込みあたりの計算を増やす | memory | 各手法の効果がbsで変わるか |
+| 量子化（INT8） | 転送バイト数（INT8で計算できれば計算も） | memory / compute | 今日は扱わない（Day 6でTensorRTを使う） |
+| KV cache | 同じ部分の再計算 | compute | 今日は扱わない（Day 7で登場） |
 
-### ✅ 理解チェックポイント
+### ③ 実装に必要な理解のレベル
+
+- 表の各手法について「何を減らしているか」を1行で言える
+- FlashAttentionは「計算量は同じでも、VRAMとの往復を減らすから速い」と言える
+- bs=1ではoverhead（カーネル起動）の割合が大きくなりやすいと言える
+
+### ④ 実装ステップ（約2時間）
+
+Day 3のFP16（bs=1）を基準に、**手法を1つずつ足しては計測**する。毎回「レイテンシ（中央値/p90）・ピークメモリ・FP32の出力とのずれ」を記録し、`save_result()` の `note` に手法名を書く。
+
+1. **SDPAあり／なし**（30分）
+   - timmのViTには、SDPAを使うかどうかの設定がある（バージョンによって方法が違うので、timmのドキュメントで確認する）
+   - 224×224（197トークン）と384×384（577トークン、`vit_base_patch16_384`）で比べ、トークン数が増えると差がどう変わるか見る
+2. **`torch.compile`**（25分）
+   - 初回のコンパイル時間と、2回目以降の速度を分けて記録する
+   - プロファイルを取り、Day 4と比べて演算子の数がどう変わったか見る
+3. **CUDA Graphs**（15分）：`torch.compile(mode="reduce-overhead")` をbs=1で試す
+4. **bsを変えて効果を比べる**（25分）：bs=1, 8, 32, 64 で、各手法の効果がどう変わるか
+5. **まとめる**（15分）：手法ごとの表とグラフ、**最速の構成** を記録する（Day 6でTensorRTと比べる）
+6. **READMEに残す**（10分）：表、グラフ、「効いた手法と効かなかった手法」をRooflineの言葉で説明
+
+**この日の成果物**：`notebooks/05_vit_optimizations.ipynb`、手法ごとのグラフ、READMEの表と考察
+
+### ⑤ 理解チェックポイント
 - 表の各手法について「何を減らしているか」を自分の言葉で言える
 - FlashAttentionが「計算量は同じなのに速い」理由を、メモリ階層を使って説明できる
-- batchingでスループットが上がる理由を、演算強度で説明できる
-- 量子化が速度向上につながる条件と、つながらない条件を、自分の計測結果を使って言える
-- `torch.compile` で速くなった（ならなかった）理由を、overheadやfusionの観点で説明できる
+- `torch.compile` やCUDA Graphsで速くなった（ならなかった）理由を説明できる
+- bs=1で効く手法と、bsが大きいときに効く手法の違いを説明できる
 
 ---
 
-## Day 6：ViT → VLM ＋ TensorRT ／ Vision EncoderをTensorRT化 ★エッジ移植の練習
+## Day 6：TensorRT ＋ ViT → VLM ★エッジ移植の練習
 
-**目標**：VLMのVision側の構造を理解し、その部分を「ONNX変換 → 量子化 → エンジン化 → 精度と速度の検証」というエッジ移植の流れで高速化できるようになる
+**この日のゴール**：「ONNX変換 → 量子化 → エンジン化 → 精度と速度の検証」というエッジ移植の流れを一通り経験し、VLMの構成を説明できる
 
-### 理論（ViT・VLMは経験済みなので短めに、TensorRTに時間を使う）
-**教材**
-1. 『Vision Transformer入門』：ViTの基本構造の章を復習（30分）、マルチモーダル（CLIPなど）の章を拾い読み
-2. Zenn / Qiita で「SmolVLM 解説」「CLIP SigLIP 違い」を検索（VLMの構成を確認）
-3. Zenn / Qiita で「TensorRT 入門 ONNX」「TensorRT INT8 量子化 キャリブレーション」を検索し、解説記事を1〜2本読む
-4. 🇬🇧 NVIDIA TensorRT Developer Guide：量子化（explicit quantization / Q/DQ）の節と、Support MatrixのT4の行
+### ① 読む範囲（約1.5時間）
 
-**学習内容**
-- **ViT・VLMの復習**
-  - パッチ分割 → 線形射影 → 位置埋め込み → Transformer Encoder（224×224、パッチ16 → 196トークン）
-  - VLMの基本構成：Vision Encoder（SigLIPなど）→ Projector → LLM
-  - SmolVLAの工夫：画像トークンの圧縮、LLMの前半の層だけを使う
-- **TensorRTの基本**
-  - 何をしているか：層の融合（fusion）、各層で最速のカーネルを選ぶ（tactic選択）、精度の変更（FP16 / INT8）
-  - 流れ：PyTorch → ONNX → TensorRTエンジン（GPUの種類ごとに作り直しが必要）
-  - INT8の2つの方式：キャリブレーションでスケールを決める方式（implicit）と、ONNXにQ/DQノードを入れる方式（explicit）。TensorRT 10ではexplicitが推奨で、NVIDIA ModelOptなどでQ/DQ入りのONNXを作る。**進めているPTQ練習（ONNX RuntimeのQDQ形式）と同じ考え方**
-  - **T4のINT8 Tensor Core**で、INT8のまま行列積を計算できるから速くなる（bitsandbytesとの違い）
+| 教材 | 範囲 | 読み方 | 目的 |
+|---|---|---|---|
+| Zenn / Qiita | 「TensorRT 入門 ONNX」「TensorRT INT8 量子化 キャリブレーション」 | 1〜2本 | TensorRTの流れを日本語でつかむ |
+| 🇬🇧 TensorRT Developer Guide | 量子化（explicit quantization / Q/DQ）の節、Support MatrixのT4の行 | 必要な部分だけ | 使うバージョンでの推奨手順を確認 |
+| GPU本 | 第8章 8.1 ディープラーニング用のハードウェア | 流し読み | INT8で計算する専用回路の背景 |
+| ViT本 | 第2章 2-2 ViTの全体像 〜 2-5 Encoder | 流し読み（30分） | ViTの構造の復習（経験済みなので短く） |
+| ViT本 | 第1章 1-2 Vision and languageへの拡張 | 流し読み | 画像と言語を組み合わせる流れ |
+| Zenn / Qiita | 「SmolVLM 解説」「CLIP SigLIP 違い」 | 1本 | VLMの構成（Vision Encoder → Projector → LLM） |
 
-### 成果物の作業
-1. **構造を確認する**：`modeling_smolvla.py` を読み、Vision Encoder部分のモジュール名、画像1枚が何トークンになるか、LLMの何層目までを使っているかを確認する。ViT → Projector → LLM の図にshapeを書き込む（READMEに載せる）
-2. **ONNXに変換する**：Vision Encoder（＋可能ならProjector）だけを切り出し、`torch.onnx.export` でONNXにする
-   - 入出力のshapeを固定する（エッジ向けでは固定shapeが基本）
-   - ONNX Runtime（CPU）で推論し、PyTorchの出力と一致するか確認する（コサイン類似度、最大誤差）
-3. **TensorRTのFP16エンジンを作る**：Colabで `pip install tensorrt` し、Python APIでエンジンを作って推論する
-4. **TensorRTのINT8エンジンを作る（PTQ）**
-   - キャリブレーション用に、LeRobotのデータセットから画像を100〜500枚取り出す
-   - ModelOptなどでQ/DQ入りのONNXを作るか、TensorRTのキャリブレーション機能を使ってINT8エンジンを作る（使うバージョンで推奨される方法に従う）
-   - 一部の層（最初のパッチ埋め込みなど）をFP16のまま残すと、精度と速度がどう変わるかも試す
-5. **比較表を作る**（Vision Encoder単体）
+### ② 本の内容と実装の対応
 
-   | | PyTorch FP32 | PyTorch FP16 | TensorRT FP16 | TensorRT INT8 |
-   |---|---|---|---|---|
-   | レイテンシ（中央値 / p90） | | | | |
-   | ピークメモリ | | | | |
-   | FP32出力とのコサイン類似度 | | | | |
+| 学ぶこと | 実装で確かめること |
+|---|---|
+| TensorRTの最適化（fusion、カーネル選択、精度変更） | PyTorchの最速構成（Day 5）とTensorRT FP16を比べる |
+| INT8量子化、キャリブレーション、Q/DQ | TensorRT INT8でPTQし、Imagenetteで精度を測る（PTQ練習と同じ考え方） |
+| INT8専用の回路（GPU本 8.1、T4のINT8 Tensor Core） | INT8で速くなるかを確かめる |
+| ViTの構造（ViT本 第2章） | ONNXに変換するときの入出力のshapeとして確認する |
+| VLMの構成 | 後半：SmolVLAのVision Encoderを特定し、同じ手順を当てはめる |
 
-6. **全体への影響を見積もる**：Day 5で測った「Vision Encoderが全体に占める割合」から、アムダールの法則で「VLA全体は最大何倍速くなるか」を計算する。可能なら、TensorRTの出力をSmolVLAの残りの部分に戻して推論し、最終的な行動のずれも測る
-7. つまずいた点（ONNX変換できなかった演算子、精度が落ちた層など）をメモしておく。**エッジ移植では、このつまずきとその対処こそが一番価値のある記録になる**
+### ③ 実装に必要な理解のレベル
 
-> **時間が足りない場合**：手順4（INT8）は予備日に回してよい。FP16のTensorRT化までで、移植の流れは一通り経験できる
-> **（任意・予備日）**：カメラの台数を1〜3枚に変え、系列長とVision・LLM部分のレイテンシの関係をグラフにする
+- TensorRTは「ONNXを読み込んで、そのGPU専用に最適化したエンジンを作る」ものだと言える
+- INT8化には、値の範囲からスケールを決める処理（キャリブレーション）が必要だと言える
+- 精度が落ちやすい層（最初・最後の層、LayerNorm、softmax）をFP16のまま残す選択肢があると知っている
 
-### ✅ 理解チェックポイント
-- ViTの処理の流れと、VLMの3つの構成要素の役割をshapeつきで説明できる
-- SmolVLAで画像1枚が何トークンになり、それがレイテンシにどう効くか説明できる
-- TensorRTがPyTorchより速くなる理由を、fusion・カーネル選択・精度の3つの観点で説明できる
-- INT8で速くなる条件（INT8のTensor Coreで計算できるか）を、bitsandbytesの結果と対比して説明できる
-- PTQのキャリブレーションが何を決めているか、Q/DQノードが何をしているか説明できる
-- Vision Encoderだけ速くしたとき、全体がどれだけ速くなるかをアムダールの法則で説明できる
+### ④ 実装ステップ（約2.5時間）
+
+**前半：ViTをTensorRT化する**
+1. **精度評価の準備**（20分）：`src/eval_imagenette.py`。Imagenetteのval全データで、ImageNetの1000クラスのうちImagenetteの10クラスのロジットだけを使ってtop-1精度を測る（PTQ練習のImagenetteの準備手順を流用）
+2. **ONNXに変換する**（20分）：`torch.onnx.export`（入出力のshapeは固定）。ONNX Runtime（CPU）で推論し、PyTorchの出力と一致するか確認する
+3. **TensorRT FP16**（30分）：`pip install tensorrt`、Python APIでエンジンを作って推論・計測する
+4. **TensorRT INT8（PTQ）**（40分）
+   - Imagenetteのtrainから、キャリブレーション用の画像を100〜500枚取り出す
+   - 使うバージョンで推奨される方法（ModelOptでQ/DQ入りのONNXを作る、など）でINT8エンジンを作る
+   - 一部の層をFP16のまま残した場合も試す
+5. **比較表を作る**（15分）
+
+   | | PyTorch FP32 | PyTorch FP16 | PyTorch 最速（Day 5） | TensorRT FP16 | TensorRT INT8 |
+   |---|---|---|---|---|---|
+   | レイテンシ bs=1 | | | | | |
+   | スループット bs=64 | | | | | |
+   | ピークメモリ | | | | | |
+   | Imagenette top-1精度 | | | | | |
+
+6. **つまずいた点を記録する**（5分）：変換できなかった演算子、精度が落ちた層、その対処
+
+**後半：SmolVLAのVision Encoderに当てはめる**（時間が足りなければ予備日へ）
+7. SmolVLAを読み込み（Day 7の手順1）、`modeling_smolvla.py` でVision Encoderの部分と、画像1枚が何トークンになるかを確認する
+8. Vision Encoderだけを切り出し、TensorRT FP16にしてViT-B/16と比べる
+
+**この日の成果物**：`notebooks/06_vit_tensorrt.ipynb`、`src/eval_imagenette.py`、`src/export_trt.py`、READMEの比較表とつまずいた点
+
+### ⑤ 理解チェックポイント
+- TensorRTがPyTorchより速くなる理由を、fusion・カーネル選択・精度の3つで説明できる
+- INT8で速くなる条件と、精度が落ちやすい層を、自分の結果で言える
+- キャリブレーションが何を決めているか説明できる
+- VLMの3つの構成要素（Vision Encoder / Projector / LLM）の役割を説明できる
 
 ---
 
-## Day 7：VLA（Vision / LLM / Planner）／ Planner側の解析とレポート作成
+## Day 7：VLA（Vision / LLM / Planner）
 
-### 理論
-**教材**
-1. Zenn / Qiita / 企業の技術ブログで以下を検索し、日本語の解説を読む
-   - 「VLA Vision-Language-Action 解説」「RT-2 解説」「OpenVLA 解説」「π0 解説 flow matching」
-   - 「SmolVLA 解説」「action chunking」
-2. 🇬🇧 論文はアーキテクチャの図とその説明の段落だけ読む
-   - RT-2（2023）、OpenVLA（arXiv:2406.09246）、π0（arXiv:2410.24164）
-- （任意）自動運転VLA：ReCogDrive（VLM＋拡散モデルのplanner）
+**この日のゴール**：VLAの3つのブロックと、行動の出し方の2つの流派を説明でき、SmolVLAのどこが重いかを自分の計測で示せる
 
-**学習内容**
-```
-カメラ画像 ─▶ [Vision Encoder (ViT)] ─┐
-                                      ├─▶ [LLM / VLM backbone] ─▶ [Planner / Action Head] ─▶ 行動
-言語指示・ロボットの状態 ─────────────┘        (状況理解)            (具体的な行動を出力)
-```
+### ① 読む範囲（約1.5時間）
 
-**Plannerの2つの流派**
+| 教材 | 範囲 | 読み方 | 目的 |
+|---|---|---|---|
+| ViT本 | 第5章 5-1 Vision and Languageのサブタスク ／ 5-4 Embodied AIへの応用 | 精読 | ロボットなど「体を持つAI」への応用の流れ |
+| Zenn / Qiita / 技術ブログ | 「VLA Vision-Language-Action 解説」「RT-2 解説」「OpenVLA 解説」「π0 flow matching」「SmolVLA 解説」 | 2〜3本 | VLAの全体像を日本語でつかむ |
+| 🇬🇧 VLA論文 | RT-2、OpenVLA、π0、SmolVLA：アーキテクチャの図と、その説明の段落だけ | 流し読み | 構成を図で比べる |
+| （任意）ReCogDrive論文 | アーキテクチャの図 | 流し読み | 自動運転でも同じ構図であることの確認 |
 
-| | 離散トークン型 | 連続値生成型 |
-|---|---|---|
-| 代表例 | RT-2, OpenVLA | π0, **SmolVLA**, GR00T N1 |
-| 行動の表し方 | 各次元を256段階に量子化し、トークンとして出力 | flow matching / 拡散モデルで連続値を生成 |
-| Planner | LLM自身が行動トークンを出す | LLMとは別の小さな **action expert** |
-| 推論の特徴 | 行動の次元数だけ自己回帰で生成するので遅い | LLM部分は1回、action expertを数ステップ回す |
+### ② 本の内容と実装の対応
 
-- **action chunking**：1回の推論で複数ステップ分の行動をまとめて出す
-- **非同期推論**（SmolVLAの特徴）：行動を実行しながら次の推論を進め、待ち時間を隠す
-- flow matchingのステップを回すとき、VLM部分の出力（KV cache）を使い回せるので、ステップごとにVLM全体を計算し直さなくてよい
+| 学ぶこと | 実装で確かめること |
+|---|---|
+| VLAの3ブロック（Vision / LLM / Planner） | SmolVLAの部品ごとのパラメータ数と時間の内訳 |
+| 離散トークン型と連続値生成型 | SmolVLAは連続値生成型（flow matching）であることをコードで確認する |
+| flow matchingのステップ | ステップ数を変えて、レイテンシと出力のずれを測る |
+| action chunking | `select_action` がchunkをキューにためる仕組みをコードで確認し、制御周波数を計算する |
+| KV cache | flow matchingのステップでVLMの計算を使い回しているかを、コードとプロファイルで確認する |
 
-### 成果物の作業
-1. **flow matchingのステップ数を変える実験**：既定値（10ステップ）から 1, 2, 5, 10, 20 と変え、レイテンシと基準出力からのずれを測る。「速さと精度のトレードオフ」のグラフにする
-2. コードを読み、ステップを回すときに **VLM部分の計算（KV cache）が使い回されているか** を確認する。使い回されていれば、action expertだけが繰り返し計算されていることを、Day 4のプロファイルと照らし合わせて確認する
-3. **制御周波数を計算する**：レイテンシと1回で出す行動の数（chunk size）から、何Hzでロボットを制御できるかを計算する
-4. **レポート（README）を書く**（予備日も使う）
-   1. 概要：何をしたか、主な結果（一番速い構成で何倍速くなったか）
-   2. 環境：T4の仕様、ライブラリのバージョン、計測方法
-   3. SmolVLAの構成図（Vision / LLM / Planner、shapeつき）
-   4. ベースライン：CPU vs GPU、FP32 vs FP16
-   5. ボトルネック分析：部品ごとの時間の内訳、Roofline図
-   6. 高速化の結果（PyTorch）：手法ごとの表とグラフ
-   7. **エッジ移植：Vision EncoderのTensorRT化**（FP16 / INT8の比較表、つまずいた点と対処）
-   8. Plannerの解析：flow matchingのステップ数の実験、制御周波数
-   9. 考察：効いた手法と効かなかった手法を、それぞれRooflineの言葉で説明する（bitsandbytesとTensorRTのINT8の違いなど）
-   10. 制約と今後：T4の制約、VLA全体のTensorRT化、Jetson向けの展開
+### ③ 実装に必要な理解のレベル
 
-### ✅ 理解チェックポイント
+- VLAは「画像と指示を理解して（VLM）、行動を出す（Planner）」構成だと言える
+- SmolVLAは模倣学習のモデルで、`policy` / `select_action` はLeRobotの共通の名前だと知っている
+- `select_action` は2回目以降キューから取り出すだけなので、計測の前に `policy.reset()` が必要だと知っている
+
+### ④ 実装ステップ（約2.5時間）
+
+1. **SmolVLAを動かす**（30分）
+   ```python
+   import torch
+   from lerobot.datasets.lerobot_dataset import LeRobotDataset
+   from lerobot.policies.factory import make_pre_post_processors
+   from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+
+   model_id = "lerobot/smolvla_base"
+   policy = SmolVLAPolicy.from_pretrained(model_id).to("cuda").eval()
+   preprocess, postprocess = make_pre_post_processors(
+       policy.config, model_id, preprocessor_overrides={"device_processor": {"device": "cuda"}})
+
+   dataset = LeRobotDataset("lerobot/libero", episodes=[0])   # 必要なエピソードだけ取得
+   batch = preprocess(dict(dataset[0]))
+   with torch.inference_mode():
+       policy.reset()                          # キューを空にして必ず推論させる
+       action = postprocess(policy.select_action(batch))   # frame ではなく batch を渡す
+   print(action.shape)
+   ```
+   - バージョンによってimportのパスや引数名が違う。エラーが出たら公式のREADMEを確認する
+   - 入力名のエラーは `policy.config.input_features` と `dataset.features.keys()` を見比べる
+   - flow matchingの乱数を固定し、FP32の出力を「基準の出力」として保存する
+2. **部品ごとに分解する**（30分）：Vision Encoder / LLM部分 / action expert のパラメータ数と、`torch.profiler` での時間の内訳。Vision EncoderをViT-B/16と比べる
+3. **アムダールの法則で見積もる**（10分）：Day 6のTensorRT化の結果から、Vision部分だけ速くしたらVLA全体は最大何倍速くなるか
+4. **flow matchingのステップ数を変える**（25分）：1, 2, 5, 10, 20 でレイテンシと基準出力からのずれを測り、グラフにする
+5. **制御周波数を計算する**（10分）：レイテンシとchunk sizeから、何Hzで制御できるか
+6. **レポートを書く**（45分〜、予備日も使う）
+   1. 概要（主な結果）
+   2. 環境と計測方法
+   3. ViTのベースライン（CPU vs GPU、FP32 vs FP16、bs）
+   4. ボトルネック分析（演算子の内訳、Roofline図）
+   5. 高速化の結果（PyTorch）
+   6. エッジ移植（TensorRT FP16 / INT8、精度、つまずいた点）
+   7. VLAへの展開（SmolVLAの構成図、部品ごとの時間、ステップ数、制御周波数）
+   8. 考察（効いた手法・効かなかった手法をRooflineの言葉で）
+   9. 制約と今後
+
+**この日の成果物**：`notebooks/07_smolvla_analysis.ipynb`、グラフ、レポートとしてのREADME
+
+### ⑤ 理解チェックポイント
 - VLAのVision / LLM / Plannerの役割を、SmolVLAを例に説明できる
 - 離散トークン型と連続値生成型の違いを説明でき、SmolVLAがどちらか言える
-- flow matchingのステップ数がレイテンシと精度にどう効くか、自分の計測結果で説明できる
-- action chunkingと非同期推論が、推論速度の問題をどう解決しているか説明できる
+- SmolVLAのどの部品が一番時間を使っているか、自分の計測結果で説明できる
+- action chunkingが推論速度の問題をどう解決しているか説明できる
 - 自分のレポートの結論を、1分で口頭説明できる
 
 ---
@@ -406,10 +597,9 @@ Day 3のFP16版を基準にして、**手法を1つずつ足しては計測**す
 
 ## その先に進むなら
 
-- **SmolVLA全体のTensorRT化**：VLM部分とaction expertもONNX → TensorRTに変換し、VLA全体をエンジン化する。flow matchingのループやKV cacheの扱いが難所
-- **AWSのg5 / g6でTensorRT-Edge-LLM**：g5（A10G, Ampere）やg6（L4, Ada）は開発用GPUの条件を満たす。Isaac Lab用の環境と共用できる
-- **ReCogDriveを動かす**：g6（L4, 24GB）で、INT4 / FP8に量子化したVLM部分を動かす。TensorRT-Edge-LLMはInternVL系のVLMに対応しているが、diffusion plannerは自分でつなぐ必要がある（難易度高）
+- **SmolVLA全体のTensorRT化**：VLM部分とaction expertもエンジン化する。flow matchingのループとKV cacheの扱いが難所
+- **AWSのg5 / g6でTensorRT-Edge-LLM**：g5（A10G）やg6（L4）は開発用GPUの条件を満たす。Isaac Lab用の環境と共用できる
+- **ReCogDriveを動かす**：g6（L4, 24GB）で、INT4 / FP8に量子化したVLM部分を動かす（難易度高）
 - **Arm向けの展開**：Arm公式の "SmolVLA ExecuTorch conversion" の学習パス
-- **シミュレータで性能評価**：LIBEROなどのシミュレータで、高速化前後のタスク成功率を比べる
-- Triton で fused kernel を1本書いてみる
-- 本格的な教科書：パタヘネ『コンピュータの構成と設計』、『CUDA Cプロフェッショナルプログラミング』
+- **シミュレータで性能評価**：LIBEROで、高速化前後のタスク成功率を比べる
+- **本の残りの章**：CPU本 第9〜12章（マルチプロセッサ、キャッシュコヒーレンス）、GPU本 第5章（CUDA・OpenCL）、『CUDA Cプロフェッショナルプログラミング』
