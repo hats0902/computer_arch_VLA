@@ -1,0 +1,4 @@
+timestamp,model,device,device_name,precision,batch_size,median_ms,p90_ms,throughput,n_iter,torch_version,note
+2026-11-12 08:50:03,vit_base_patch16_224,cpu,cpu (1 threads),fp32,1,694.9649,1201.7761,1.44,20,2.14.1+cpu,threads=1
+2026-11-12 08:50:21,vit_base_patch16_224,cpu,cpu (2 threads),fp32,1,688.9765,1419.774,1.45,20,2.14.1+cpu,threads=2
+2026-11-12 08:50:40,vit_base_patch16_224,cpu,cpu (4 threads),fp32,1,715.9927,1227.4562,1.4,20,2.14.1+cpu,threads=4

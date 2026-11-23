@@ -28,7 +28,7 @@ CSV_COLUMNS = [
     "device_name",    # GPU名やCPUのスレッド数など
     "precision",      # fp32 / fp16 / int8 など
     "batch_size",
-    "median_ms",      # レイテンシの中央値（ミリ秒）
+    "median_ms",      # レイテンシの中央値（ミリ秒） 推論全体時間がどれくらいかかったかの測定
     "p90_ms",         # レイテンシのp90（ミリ秒）
     "throughput",     # 1秒あたりの処理枚数（batch_size / 中央値）
     "n_iter",         # 計測した回数
@@ -45,8 +45,8 @@ def bench(fn, n_warmup=10, n_iter=50, cuda=True):
     times = []
     for _ in range(n_iter):
         if cuda:
-            torch.cuda.synchronize()
-        t = time.perf_counter()
+            torch.cuda.synchronize() # 「GPU上の、これまでの処理が全部終わるまで、CPUはここで待つ」という命令
+        t = time.perf_counter() # CPU側のタイマーで計測している
         fn()
         if cuda:
             torch.cuda.synchronize()
